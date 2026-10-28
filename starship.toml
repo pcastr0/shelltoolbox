@@ -11,20 +11,23 @@ $python\
 $character"""
 
 [directory]
-style = "#8BE9FD"
+style = "#86BBD8"
 
 [character]
-success_symbol = "[❯](#50FA7B)"
+success_symbol = "[❯](#06969A)"
+# TODO(human): give palette slot 6 (hex `#33658A`) a home in this file.
+# It must appear exactly once so `find_base` validates, and it only renders
+# differently from slot 2 in the "popos" palette (accent `#FAA05A`).
 error_symbol = "[❯](red)"
 vimcmd_symbol = "[❮](green)"
 
 [git_branch]
 format = "[$branch]($style)"
-style = "#BD93F9"
+style = "#434C5E"
 
 [git_status]
-format = "[[(*$conflicted$untracked$modified$staged$renamed$deleted)](#6272A4) ($ahead_behind$stashed)]($style)"
-style = "#BD93F9"
+format = "[[(*$conflicted$untracked$modified$staged$renamed$deleted)](#3B4252) ($ahead_behind$stashed)]($style)"
+style = "#434C5E"
 conflicted = "​"
 untracked = "​"
 modified = "​"
@@ -35,7 +38,7 @@ stashed = "≡"
 
 [git_state]
 format = '\([$state( $progress_current/$progress_total)]($style)\) '
-style = "#FF79C6"
+style = "#4C566A"
 
 [cmd_duration]
 format = "[$duration]($style) "
@@ -43,4 +46,4 @@ style = "yellow"
 
 [python]
 format = "[$virtualenv]($style) "
-style = "#BD93F9"
+style = "#434C5E"
