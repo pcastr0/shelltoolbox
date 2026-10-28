@@ -168,14 +168,41 @@ remove_starship() {
 	fi
 }
 
-remove_dependencies() {
-	print_colored "$YELLOW" "Removing apt dependencies..."
-	# The installer never recorded which packages were already present,
-	# so this removes the whole list. apt keeps any package that another
-	# installed package depends on; anything pre-existing that does get
-	# removed is simply reinstallable.
+# apt is all-or-nothing: one still-needed package (e.g. tar, which dpkg
+# depends on) aborts the entire transaction, so nothing gets removed.
+# Filter the list down first to packages nothing installed Depends or
+# Pre-Depends on — Recommends do not block removal, so they are excluded.
+# Deliberately conservative: a package whose only dependents are also
+# being removed may still be kept, which is a missed cleanup, never a
+# breakage.
+removable_dependencies() {
+	removable=
 	# shellcheck disable=SC2086
-	sudo_cmd apt-get remove -y $DEPENDENCIES
+	for pkg in $DEPENDENCIES; do
+		dependents=$(apt-cache rdepends --installed \
+			--no-recommends --no-suggests --no-conflicts \
+			--no-breaks --no-replaces --no-enhances "$pkg" 2>/dev/null |
+			sed -e '1d' -e '/^Reverse Depends:$/d' -e 's/^[[:space:]]*//' -e '/^$/d')
+		if [ -n "$dependents" ]; then
+			# >&2: this function's stdout is captured by the caller as
+			# the package list, so diagnostics must not go there.
+			print_colored "$YELLOW" "Keeping $pkg (needed by: $(printf '%s\n' "$dependents" | tr '\n' ' '))" >&2
+		else
+			removable="$removable $pkg"
+		fi
+	done
+	echo "${removable# }"
+}
+
+remove_dependencies() {
+	removable=$(removable_dependencies)
+	if [ -z "$removable" ]; then
+		print_colored "$YELLOW" "No apt dependencies are safe to remove."
+		return 0
+	fi
+	print_colored "$YELLOW" "Removing apt dependencies: $removable"
+	# shellcheck disable=SC2086
+	sudo_cmd apt-get remove -y $removable
 	print_colored "$GREEN" "Removed the shelltoolbox apt dependencies."
 }
 
@@ -186,7 +213,7 @@ confirm() {
 	print_colored "$YELLOW" "This will remove:"
 	printf '  %s\n' "$SHELLTOOLBOXDIR" "$NERD_FONT_DIR" "$HOME/.local/bin/starship"
 	printf '  the shelltoolbox symlinks in ~, ~/.config and ~/.local/bin\n'
-	printf '  these apt packages (apt keeps any that other packages need):\n    %s\n' "$DEPENDENCIES"
+	printf '  the apt packages from the install that nothing installed depends on:\n    %s\n' "$DEPENDENCIES"
 	printf 'Run with -y to skip this prompt.\n'
 	printf 'Proceed? [y/N] '
 	read -r answer
