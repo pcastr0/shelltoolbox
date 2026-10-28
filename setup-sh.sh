@@ -1,177 +1,266 @@
-#!/bin/sh -e
+#!/bin/sh
+# shelltoolbox installer — Debian 13 (trixie) only.
+#
+# Automates these steps:
+#   1. Install apt dependencies
+#   2. Install Starship to ~/.local/bin
+#   3. Install the CaskaydiaMono Nerd Font to ~/.local/share/fonts
+#   4. Copy configs to the canonical dir ~/.local/share/shelltoolbox
+#   5. Symlink them into ~ and ~/.config (backing up anything in the way)
+#   6. Point Ptyxis / GNOME Terminal at the Nerd Font via gsettings
+#
+# Idempotent: every step checks state before acting, so re-running is safe.
 
-RC=$(tput sgr0)
-RED=$(tput setaf 1)
-YELLOW=$(tput setaf 3)
-GREEN=$(tput setaf 2)
+set -eu
 
-LINUXTOOLBOXDIR="$HOME/linuxtoolbox"
-GITPATH=$(dirname "$(realpath "$0")")
-SUDO_CMD=""
+SCRIPT_DIR=$(unset CDPATH && cd -- "$(dirname -- "$0")" && pwd -P)
+SHELLTOOLBOXDIR="$HOME/.local/share/shelltoolbox"
+DEPENDENCIES="bash-completion bat tree multitail fastfetch vim neovim trash-cli fzf zoxide curl fontconfig tar xz-utils"
+NERD_FONT_FAMILY="CaskaydiaMono Nerd Font"
+NERD_FONT_SIZE=12
+NERD_FONT_URL="https://github.com/ryanoasis/nerd-fonts/releases/latest/download/CascadiaMono.tar.xz"
+STARSHIP_URL="https://starship.rs/install.sh"
 
-DEPENDENCIES="bash bash-completion tar bat tree multitail fastfetch wget curl unzip
-fontconfig trash-cli vim git starship fzf zoxide"
+if command -v tput >/dev/null 2>&1 && [ -t 1 ]; then
+	RC=$(tput sgr0)
+	RED=$(tput setaf 1)
+	YELLOW=$(tput setaf 3)
+	GREEN=$(tput setaf 2)
+else
+	RC=
+	RED=
+	YELLOW=
+	GREEN=
+fi
 
 print_colored() {
-    printf "%s%s%s\n" "$1" "$2" "$RC"
+	color=$1
+	message=$2
+	printf '%s%s%s\n' "$color" "$message" "$RC"
 }
 
 command_exists() {
-    command -v "$1" >/dev/null 2>&1
+	command -v "$1" >/dev/null 2>&1
 }
 
-die() {
-    print_colored "$RED" "$1"
-    exit 1
+fail() {
+	print_colored "$RED" "ERROR: $1"
+	exit 1
 }
 
+sudo_cmd() {
+	if command_exists sudo; then
+		sudo "$@"
+	elif command_exists doas && [ -f /etc/doas.conf ]; then
+		doas "$@"
+	else
+		su -c "$*"
+	fi
+}
+
+# Debian 13 only: /etc/debian_version reads "13.7" on a current trixie
+# point release (or "trixie/sid" on a testing install).
 check_environment() {
-    [ -r /etc/debian_version ] || die "This script supports Debian 13 only."
-    case "$(cat /etc/debian_version)" in
-        13*) ;;
-        *) die "This script supports Debian 13 only (found $(cat /etc/debian_version))." ;;
-    esac
+	if [ ! -r /etc/debian_version ]; then
+		fail "This installer supports Debian 13 only; /etc/debian_version was not found."
+	fi
 
-    if [ "$(id -u)" -eq 0 ]; then
-        SUDO_CMD=""
-    elif command -v sudo >/dev/null 2>&1; then
-        SUDO_CMD="sudo"
-        sudo -v || die "sudo access is required to run this script."
-    else
-        die "Run as root or install sudo."
-    fi
+	debian_version=$(cat /etc/debian_version)
+	case $debian_version in
+	13.* | trixie/sid) ;;
+	*)
+		fail "This installer supports Debian 13 only; found Debian version '$debian_version'."
+		;;
+	esac
 
-    [ -w "$GITPATH" ] || die "Can't write to $GITPATH"
+	if ! command_exists apt-get; then
+		fail "apt-get was not found; this installer supports Debian 13 only."
+	fi
 }
 
-# setup_directories() {
-#     mkdir -p "$LINUXTOOLBOXDIR"
-#     rm -rf "$LINUXTOOLBOXDIR/mybash"
-
-#     print_colored "$YELLOW" "Cloning mybash into $LINUXTOOLBOXDIR/mybash"
-#     git clone https://github.com/ChrisTitusTech/mybash "$LINUXTOOLBOXDIR/mybash" \
-#         || die "Failed to clone mybash repository"
-#     print_colored "$GREEN" "Cloned mybash repository"
-# }
+# Echo the $DEPENDENCIES packages that are not yet installed,
+# space-separated; prints nothing when everything is already present.
+missing_dependencies() {
+	missing=
+	# shellcheck disable=SC2086
+	for pkg in $DEPENDENCIES; do
+		if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'ok installed'; then
+			missing="$missing $pkg"
+		fi
+	done
+	echo "${missing# }"
+}
 
 install_dependencies() {
-    print_colored "$YELLOW" "Installing dependencies..."
-    $SUDO_CMD apt-get update
-    # shellcheck disable=SC2086
-    $SUDO_CMD apt-get install -y $DEPENDENCIES
+	missing=$(missing_dependencies)
+	if [ -z "$missing" ]; then
+		return 0
+	fi
 
-    if ! command_exists nvim; then
-        DEPENDENCIES="${DEPENDENCIES} neovim"
-    fi
-
-    install_font
+	print_colored "$YELLOW" "Installing missing dependencies with apt..."
+	sudo_cmd apt-get update
+	# shellcheck disable=SC2086
+	sudo_cmd apt-get install -y $missing
 }
 
-install_font() {
-    FONT_NAME="Caskaydia Nerd Font Mono"
-    FONT_URL="https://github.com/ryanoasis/nerd-fonts/releases/download/v3.4.0/CascadiaMono.zip"
-    FONT_DIR="$HOME/.local/share/fonts/$FONT_NAME"
+install_starship() {
+	if command_exists starship; then
+		return 0
+	fi
 
-    if fc-list :family | grep -iq "$FONT_NAME"; then
-        printf "Font '%s' is already installed.\n" "$FONT_NAME"
-        return
-    fi
-
-    printf "Installing font '%s'\n" "$FONT_NAME"
-    wget -q --spider "$FONT_URL" || {
-        print_colored "$YELLOW" "Font URL not accessible, skipping font install."
-        return
-    }
-
-    TEMP_DIR=$(mktemp -d)
-    wget -q "$FONT_URL" -O "$TEMP_DIR/font.zip"
-    unzip -q "$TEMP_DIR/font.zip" -d "$TEMP_DIR"
-    mkdir -p "$FONT_DIR"
-    mv "$TEMP_DIR"/*.ttf "$FONT_DIR"/
-    fc-cache -f
-    rm -rf "$TEMP_DIR"
-    printf "'%s' installed successfully.\n" "$FONT_NAME"
+	print_colored "$YELLOW" "Installing Starship..."
+	mkdir -p "$HOME/.local/bin"
+	starship_installer=$(mktemp)
+	if ! curl -fsSL "$STARSHIP_URL" -o "$starship_installer"; then
+		rm -f "$starship_installer"
+		fail "Failed to download the Starship installer."
+	fi
+	if ! sh "$starship_installer" -y -b "$HOME/.local/bin"; then
+		rm -f "$starship_installer"
+		fail "Starship installation failed."
+	fi
+	rm -f "$starship_installer"
+	print_colored "$GREEN" "Starship installed to $HOME/.local/bin."
 }
 
-install_starship_and_fzf() {
-    if ! command_exists starship; then
-        if ! curl -sS https://starship.rs/install.sh | sh; then
-            print_colored "$RED" "Something went wrong during starship install!"
-            exit 1
-        fi
-    else
-        printf "Starship already installed\n"
-    fi
+install_nerd_font() {
+	if fc-list 2>/dev/null | grep -qi "$NERD_FONT_FAMILY"; then
+		return 0
+	fi
 
-    if ! command_exists fzf; then
-        if [ -d "$HOME/.fzf" ]; then
-            print_colored "$YELLOW" "FZF directory already exists. Skipping installation."
-        else
-            git clone --depth 1 https://github.com/junegunn/fzf.git ~/.fzf
-            ~/.fzf/install
-        fi
-    else
-        printf "Fzf already installed\n"
-    fi
+	print_colored "$YELLOW" "Installing $NERD_FONT_FAMILY..."
+	font_temp_dir=$(mktemp -d)
+	font_archive="$font_temp_dir/CascadiaMono.tar.xz"
+	font_unpack_dir="$font_temp_dir/unpacked"
+	font_dir="$HOME/.local/share/fonts/CaskaydiaMonoNerdFont"
+	mkdir -p "$font_unpack_dir" "$font_dir"
+
+	if ! curl -fsSL "$NERD_FONT_URL" -o "$font_archive"; then
+		rm -rf "$font_temp_dir"
+		fail "Failed to download $NERD_FONT_FAMILY."
+	fi
+	if ! tar -xJf "$font_archive" -C "$font_unpack_dir"; then
+		rm -rf "$font_temp_dir"
+		fail "Failed to extract $NERD_FONT_FAMILY."
+	fi
+
+	# Verify the payload we just unpacked — not the destination dir,
+	# which may hold stale files from an earlier failed run.
+	if ! find "$font_unpack_dir" -type f -name 'CaskaydiaMonoNerdFont-*.ttf' -print -quit | grep -q .; then
+		rm -rf "$font_temp_dir"
+		fail "No standard CaskaydiaMono Nerd Font files were found in the archive."
+	fi
+	find "$font_unpack_dir" -type f -name 'CaskaydiaMonoNerdFont-*.ttf' -exec cp {} "$font_dir"/ \;
+	rm -rf "$font_temp_dir"
+
+	fc-cache -f >/dev/null 2>&1
+	print_colored "$GREEN" "$NERD_FONT_FAMILY installed."
 }
 
-install_zoxide() {
-    if ! command_exists zoxide; then
-        if ! curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh; then
-            print_colored "$RED" "Something went wrong during zoxide install!"
-            exit 1
-        fi
-    else
-        printf "Zoxide already installed\n"
-    fi
+backup_existing() {
+	target=$1
+	if [ -e "$target" ] || [ -L "$target" ]; then
+		backup="$target.bak.$(date +%Y%m%d%H%M%S)"
+		mv "$target" "$backup"
+		print_colored "$YELLOW" "Backed up $target to $backup"
+	fi
 }
 
-create_fastfetch_config() {
-    USER_HOME=$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)
-    CONFIG_DIR="$USER_HOME/.config/fastfetch"
-    CONFIG_FILE="$CONFIG_DIR/config.jsonc"
-    
-    mkdir -p "$CONFIG_DIR"
-    [ -e "$CONFIG_FILE" ] && rm -f "$CONFIG_FILE"
-    
-    if ! ln -svf "$GITPATH/config.jsonc" "$CONFIG_FILE"; then
-        print_colored "$RED" "Failed to create symbolic link for fastfetch config"
-        exit 1
-    fi
+link_file() {
+	source=$1
+	target=$2
+	target_dir=$(dirname -- "$target")
+
+	mkdir -p "$target_dir"
+
+	if [ -L "$target" ] && [ "$(readlink "$target")" = "$source" ]; then
+		return 0
+	fi
+	# Anything else in the way — file or foreign symlink — gets a
+	# timestamped backup, never a silent delete.
+	backup_existing "$target"
+
+	ln -s "$source" "$target"
+	print_colored "$GREEN" "Linked $target"
 }
 
-link_config() {
-    CONFIG_HOME="$HOME/.config"
+install_configs() {
+	print_colored "$YELLOW" "Installing configs to $SHELLTOOLBOXDIR..."
+	mkdir -p "$SHELLTOOLBOXDIR"
+	for config_file in .bashrc starship.toml config.jsonc setup-sh.sh starship-theme; do
+		source_file="$SCRIPT_DIR/$config_file"
+		target_file="$SHELLTOOLBOXDIR/$config_file"
+		# Skip files missing from the checkout, and never copy a file
+		# onto itself (cp exits non-zero when source and target share
+		# an inode, which kills the script under set -e).
+		if [ ! -e "$source_file" ] || [ "$source_file" = "$target_file" ]; then
+			continue
+		fi
+		cp -p "$source_file" "$target_file"
+	done
+	for executable in setup-sh.sh starship-theme; do
+		if [ -f "$SHELLTOOLBOXDIR/$executable" ]; then
+			chmod +x "$SHELLTOOLBOXDIR/$executable"
+		fi
+	done
 
-    # fastfetch
-    mkdir -p "$CONFIG_HOME/fastfetch"
-    ln -svf "$GITPATH/config.jsonc" "$CONFIG_HOME/fastfetch/config.jsonc" \
-        || die "Failed to link fastfetch config"
-
-    # bash + starship
-    if [ -e "$HOME/.bashrc" ] && [ ! -L "$HOME/.bashrc" ]; then
-        print_colored "$YELLOW" "Backing up existing .bashrc to ~/.bashrc.bak"
-        mv "$HOME/.bashrc" "$HOME/.bashrc.bak" || die "Can't back up .bashrc"
-    fi
-
-    ln -svf "$GITPATH/.bashrc" "$HOME/.bashrc" \
-        && ln -svf "$GITPATH/starship.toml" "$CONFIG_HOME/starship.toml" \
-        || die "Failed to create symbolic links"
-
-    if [ ! -f "$HOME/.bash_profile" ]; then
-        echo '[ -f ~/.bashrc ] && . ~/.bashrc' > "$HOME/.bash_profile"
-        print_colored "$GREEN" "Created ~/.bash_profile"
-    fi
+	link_file "$SHELLTOOLBOXDIR/.bashrc" "$HOME/.bashrc"
+	link_file "$SHELLTOOLBOXDIR/starship.toml" "$HOME/.config/starship.toml"
+	link_file "$SHELLTOOLBOXDIR/config.jsonc" "$HOME/.config/fastfetch/config.jsonc"
 }
 
-# Main
+configure_terminal_font() {
+	if ! command_exists gsettings; then
+		print_colored "$YELLOW" "Set your terminal font to '$NERD_FONT_FAMILY' manually."
+		return 0
+	fi
+
+	terminal_schemas=$(gsettings list-schemas 2>/dev/null || true)
+	terminal_configured=0
+
+	if printf '%s\n' "$terminal_schemas" | grep -q '^org.gnome.Ptyxis$'; then
+		ptyxis_backup="$SHELLTOOLBOXDIR/terminal-font-ptyxis.backup"
+		if [ ! -f "$ptyxis_backup" ]; then
+			{
+				printf 'use-system-font=%s\n' "$(gsettings get org.gnome.Ptyxis use-system-font)"
+				printf 'font-name=%s\n' "$(gsettings get org.gnome.Ptyxis font-name)"
+			} >"$ptyxis_backup"
+		fi
+		gsettings set org.gnome.Ptyxis use-system-font false
+		gsettings set org.gnome.Ptyxis font-name "$NERD_FONT_FAMILY $NERD_FONT_SIZE"
+		terminal_configured=1
+	fi
+
+	if printf '%s\n' "$terminal_schemas" | grep -q '^org.gnome.Terminal.ProfilesList$'; then
+		gnome_profile=$(gsettings get org.gnome.Terminal.ProfilesList default 2>/dev/null | tr -d "'")
+		if [ -n "$gnome_profile" ]; then
+			gnome_schema="org.gnome.Terminal.Legacy.Profile:/org/gnome/terminal/legacy/profiles:/:$gnome_profile/"
+			gnome_backup="$SHELLTOOLBOXDIR/terminal-font-gnome.backup"
+			if [ ! -f "$gnome_backup" ]; then
+				{
+					printf 'profile=%s\n' "$gnome_profile"
+					printf 'use-system-font=%s\n' "$(gsettings get "$gnome_schema" use-system-font)"
+					printf 'font=%s\n' "$(gsettings get "$gnome_schema" font)"
+				} >"$gnome_backup"
+			fi
+			gsettings set "$gnome_schema" use-system-font false
+			gsettings set "$gnome_schema" font "$NERD_FONT_FAMILY $NERD_FONT_SIZE"
+			terminal_configured=1
+		fi
+	fi
+
+	if [ "$terminal_configured" -eq 1 ]; then
+		print_colored "$GREEN" "Configured the terminal to use $NERD_FONT_FAMILY."
+	else
+		print_colored "$YELLOW" "Set your terminal font to '$NERD_FONT_FAMILY' manually."
+	fi
+}
+
 check_environment
-# setup_directories
 install_dependencies
-install_starship_and_fzf
-install_zoxide
-create_fastfetch_config
-link_config
+install_starship
+install_nerd_font
+install_configs
+configure_terminal_font
 
-print_colored "$GREEN" "Done!"
-echo "Restart your shell to see the changes."
+print_colored "$GREEN" "Installation complete. Restart your shell or run: exec bash"
