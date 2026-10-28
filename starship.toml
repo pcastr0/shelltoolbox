@@ -15,11 +15,8 @@ style = "#86BBD8"
 
 [character]
 success_symbol = "[❯](#06969A)"
-# TODO(human): give palette slot 6 (hex `#33658A`) a home in this file.
-# It must appear exactly once so `find_base` validates, and it only renders
-# differently from slot 2 in the "popos" palette (accent `#FAA05A`).
 error_symbol = "[❯](red)"
-vimcmd_symbol = "[❮](green)"
+vimcmd_symbol = "[❮](#33658A)"
 
 [git_branch]
 format = "[$branch]($style)"

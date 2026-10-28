@@ -187,7 +187,7 @@ link_file() {
 install_configs() {
 	print_colored "$YELLOW" "Installing configs to $SHELLTOOLBOXDIR..."
 	mkdir -p "$SHELLTOOLBOXDIR"
-	for config_file in .bashrc starship.toml config.jsonc setup-sh.sh starship-theme; do
+	for config_file in .bashrc starship.toml config.jsonc setup-sh.sh uninstall-sh.sh starship-theme; do
 		source_file="$SCRIPT_DIR/$config_file"
 		target_file="$SHELLTOOLBOXDIR/$config_file"
 		# Skip files missing from the checkout, and never copy a file
@@ -198,7 +198,7 @@ install_configs() {
 		fi
 		cp -p "$source_file" "$target_file"
 	done
-	for executable in setup-sh.sh starship-theme; do
+	for executable in setup-sh.sh uninstall-sh.sh starship-theme; do
 		if [ -f "$SHELLTOOLBOXDIR/$executable" ]; then
 			chmod +x "$SHELLTOOLBOXDIR/$executable"
 		fi
