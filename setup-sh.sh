@@ -207,6 +207,7 @@ install_configs() {
 	link_file "$SHELLTOOLBOXDIR/.bashrc" "$HOME/.bashrc"
 	link_file "$SHELLTOOLBOXDIR/starship.toml" "$HOME/.config/starship.toml"
 	link_file "$SHELLTOOLBOXDIR/config.jsonc" "$HOME/.config/fastfetch/config.jsonc"
+	link_file "$SHELLTOOLBOXDIR/starship-theme" "$HOME/.local/bin/starship-theme"
 }
 
 configure_terminal_font() {
