@@ -63,7 +63,7 @@ export XDG_STATE_HOME="$HOME/.local/state"
 export XDG_CACHE_HOME="$HOME/.cache"
 
 # Seeing as other scripts will use it might as well export it
-export MYBASHDIR="$HOME/.local/share/mybash"
+export MYBASHDIR="$HOME/.local/share/shelltoolbox"
 
 # Allow ctrl-S for history navigation (with ctrl-R)
 [[ $- == *i* ]] && [ -t 0 ] && stty -ixon
@@ -117,7 +117,6 @@ export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
 
 #
-export OLLAMA_API_KEY="20f429bcb6a84c6f82fbbb134a9f6b47.en8thcvh7-bZ-FB9vkYeSN4U"
 
 export ANTHROPIC_AUTH_TOKEN="$OLLAMA_API_KEY"
 export ANTHROPIC_API_KEY=""
