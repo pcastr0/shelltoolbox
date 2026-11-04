@@ -2,8 +2,8 @@
 # shelltoolbox uninstaller — reverses everything setup-sh.sh did.
 #
 #   1. Restore the terminal font from the installer's gsettings backups
-#   2. Unlink ~/.bashrc, starship.toml, fastfetch config and starship-theme,
-#      restoring the .bak.<timestamp> backups the installer made
+#   2. Unlink ~/.bashrc, starship.toml, fastfetch config, starship-theme and
+#      tmux.conf, restoring the .bak.<timestamp> backups the installers made
 #   3. Remove ~/.local/share/shelltoolbox (the canonical copies)
 #   4. Remove the CaskaydiaMono Nerd Font
 #   5. Remove the Starship binary
@@ -115,10 +115,15 @@ remove_configs() {
 	unlink_and_restore "$HOME/.config/starship.toml"
 	unlink_and_restore "$HOME/.config/fastfetch/config.jsonc"
 	unlink_and_restore "$HOME/.local/bin/starship-theme"
+	unlink_and_restore "$HOME/.config/tmux/tmux.conf"
 
-	# Drop ~/.config/fastfetch if we created it and it is now empty.
+	# Drop ~/.config/fastfetch and ~/.config/tmux if we created them
+	# and they are now empty.
 	if [ -d "$HOME/.config/fastfetch" ]; then
 		rmdir "$HOME/.config/fastfetch" 2>/dev/null || true
+	fi
+	if [ -d "$HOME/.config/tmux" ]; then
+		rmdir "$HOME/.config/tmux" 2>/dev/null || true
 	fi
 }
 
