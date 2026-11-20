@@ -118,9 +118,9 @@ export NVM_DIR="$HOME/.nvm"
 
 #
 
-export ANTHROPIC_AUTH_TOKEN="$OLLAMA_API_KEY"
+export ANTHROPIC_AUTH_TOKEN=ollama
 export ANTHROPIC_API_KEY=""
-export ANTHROPIC_BASE_URL=https://ollama.com
+export ANTHROPIC_BASE_URL=http://10.0.20.105:11434
 
 #######################################################
 # MACHINE SPECIFIC ALIAS'S
