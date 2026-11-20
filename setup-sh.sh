@@ -1,8 +1,9 @@
 #!/bin/sh
-# shelltoolbox installer — Debian 13 (trixie) only.
+# shelltoolbox installer — Debian 13 (trixie) / Ubuntu 24.04 (noble) only.
 #
 # Automates these steps:
-#   1. Install apt dependencies
+#   1. Install apt dependencies (fastfetch comes from an upstream .deb on
+#      Ubuntu 24.04, where it is not packaged)
 #   2. Install Starship to ~/.local/bin
 #   3. Install the CaskaydiaMono Nerd Font to ~/.local/share/fonts
 #   4. Copy configs to the canonical dir ~/.local/share/shelltoolbox
@@ -58,23 +59,53 @@ sudo_cmd() {
 	fi
 }
 
-# Debian 13 only: /etc/debian_version reads "13.7" on a current trixie
-# point release (or "trixie/sid" on a testing install).
+# Debian 13 or Ubuntu 24.04 only. Distro detection goes through
+# /etc/os-release: Ubuntu does not maintain a meaningful /etc/debian_version
+# (noble reports "trixie/sid"), so Debian's version file is only used as the
+# fallback for Debian testing installs, where VERSION_ID is absent.
+# A current trixie point release reads "13.7", testing reads "trixie/sid".
 check_environment() {
-	if [ ! -r /etc/debian_version ]; then
-		fail "This installer supports Debian 13 only; /etc/debian_version was not found."
+	os_id=
+	os_version_id=
+
+	if [ -r /etc/os-release ]; then
+		os_id=$(sed -n 's/^ID=//p' /etc/os-release | tr -d '"')
+		os_version_id=$(sed -n 's/^VERSION_ID=//p' /etc/os-release | tr -d '"')
 	fi
 
-	debian_version=$(cat /etc/debian_version)
-	case $debian_version in
-	13.* | trixie/sid) ;;
+	case $os_id in
+	debian)
+		case $os_version_id in
+		13.*) ;;
+		*)
+			if [ ! -r /etc/debian_version ]; then
+				fail "This installer supports Debian 13 only; /etc/debian_version was not found."
+			fi
+			debian_version=$(cat /etc/debian_version)
+			case $debian_version in
+			13.* | trixie/sid) ;;
+			*)
+				fail "This installer supports Debian 13 only; found Debian version '$debian_version'."
+				;;
+			esac
+			;;
+		esac
+		;;
+	ubuntu)
+		case $os_version_id in
+		24.04) ;;
+		*)
+			fail "This installer supports Ubuntu 24.04 only; found Ubuntu version '$os_version_id'."
+			;;
+		esac
+		;;
 	*)
-		fail "This installer supports Debian 13 only; found Debian version '$debian_version'."
+		fail "This installer supports Debian 13 and Ubuntu 24.04 only; found '$(printf '%s' "${os_id:-unknown}")'."
 		;;
 	esac
 
 	if ! command_exists apt-get; then
-		fail "apt-get was not found; this installer supports Debian 13 only."
+		fail "apt-get was not found; this installer supports Debian 13 and Ubuntu 24.04 only."
 	fi
 }
 
@@ -84,6 +115,11 @@ missing_dependencies() {
 	missing=
 	# shellcheck disable=SC2086
 	for pkg in $DEPENDENCIES; do
+		# fastfetch is not in Ubuntu 24.04's repositories (it only entered
+		# Ubuntu in 24.10); install_fastfetch below pulls it from upstream.
+		if [ "$pkg" = fastfetch ] && [ "$os_id" = ubuntu ]; then
+			continue
+		fi
 		if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'ok installed'; then
 			missing="$missing $pkg"
 		fi
@@ -101,6 +137,36 @@ install_dependencies() {
 	sudo_cmd apt-get update
 	# shellcheck disable=SC2086
 	sudo_cmd apt-get install -y $missing
+}
+
+install_fastfetch() {
+	if command_exists fastfetch; then
+		return 0
+	fi
+
+	# Map dpkg architecture names onto the assets fastfetch publishes.
+	arch=$(dpkg --print-architecture 2>/dev/null || true)
+	case $arch in
+	amd64) fastfetch_arch=amd64 ;;
+	arm64) fastfetch_arch=aarch64 ;;
+	*)
+		fail "No upstream fastfetch .deb for architecture '$arch'; install fastfetch manually."
+		;;
+	esac
+
+	print_colored "$YELLOW" "Installing fastfetch from upstream (not packaged in Ubuntu 24.04)..."
+	fastfetch_temp_dir=$(mktemp -d)
+	fastfetch_deb="$fastfetch_temp_dir/fastfetch-linux-$fastfetch_arch.deb"
+	if ! curl -fsSL "https://github.com/fastfetch-cli/fastfetch/releases/latest/download/fastfetch-linux-$fastfetch_arch.deb" -o "$fastfetch_deb"; then
+		rm -rf "$fastfetch_temp_dir"
+		fail "Failed to download the fastfetch .deb."
+	fi
+	if ! sudo_cmd apt-get install -y "$fastfetch_deb"; then
+		rm -rf "$fastfetch_temp_dir"
+		fail "fastfetch installation failed."
+	fi
+	rm -rf "$fastfetch_temp_dir"
+	print_colored "$GREEN" "fastfetch installed."
 }
 
 install_starship() {
@@ -259,6 +325,7 @@ configure_terminal_font() {
 
 check_environment
 install_dependencies
+install_fastfetch
 install_starship
 install_nerd_font
 install_configs
